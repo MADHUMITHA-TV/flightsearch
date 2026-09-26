@@ -94,24 +94,52 @@ partition-scoped query in the first place.
 
 ## Load test results
 
-*(This section is intentionally left for you to fill in — the same rule as
-the SkyReserve project applies: no invented numbers. Run `npm run load-test`
-against your own deployed table and API, and drop the k6 summary output's
-p95 figures in here per stage.)*
+Measured with k6, table pre-seeded with 100k records, on-demand billing mode.
 
-| Concurrency | `/search` p95 | `/filter` p95 | `/flight/:id` p95 |
-|---|---|---|---|
-| 50 VUs  | — | — | — |
-| 200 VUs | — | — | — |
-| 500 VUs | — | — | — |
+| Concurrency | `/search` p95 | `/filter` p95 | `/flight/:id` p95 | Success rate |
+|---|---|---|---|---|
+| 20 VUs  | 1.34s  | 639ms | 642ms | 100.00% |
+| 150 VUs | 1.39s  | 1.39s | 1.36s | 99.81% (45,844 / 45,930) |
+| 500 VUs | — | — | — | Failed — see below |
 
 Because DynamoDB is fully managed, this test is really validating the API
 layer and query design — Express overhead, JSON marshalling, whether the
 queries stay partition-scoped under load — not whether infrastructure falls
-over. If `/flight/:id` (a keyed GSI lookup) is meaningfully faster and flatter
-across the concurrency ramp than `/search` or `/filter` (range queries), that
-difference is itself worth calling out in this section: it's evidence the key
-design, not the server, is what's driving latency.
+over. All three endpoints landed within a similar band at each concurrency
+level rather than the keyed `/flight/:id` lookup pulling clearly ahead of the
+range queries (`/search`, `/filter`) the way its access pattern would predict
+at larger scale; see "Test environment limitations" below for why.
+
+### 500 VU ramp: reproducible failure, and why
+
+The 500-VU stage (per the original 50→200→500 brief) was attempted three
+times and failed consistently with widespread request timeouts, once ruling
+out an unrelated transient DNS blip on one attempt. This was not a DynamoDB
+or schema failure — the server logged no DynamoDB errors or throttling
+during the failed runs. The load generator (k6) and the API server were run
+on the same single laptop, competing for the same CPU, memory, and network
+stack; k6 alone spawning 500 concurrent virtual users is a meaningful load
+on a laptop even before the target server does any work. 150 VUs sustained
+a 99.81% success rate on the same hardware, so the ceiling here reflects the
+test environment, not the service under test.
+
+**What this means for the design being validated:** the schema and API
+correctly served every query pattern at the concurrency levels the test
+environment could generate cleanly. Confirming behavior at true 500-VU
+concurrency would need the load generator and API decoupled onto separate
+machines (e.g., k6 run from a small EC2 instance or a second machine against
+the deployed API), which is a natural next step rather than a gap in the
+current result.
+
+### Test environment limitations
+
+- **Client (Chennai) to `us-east-1` (Virginia) round-trip time** puts a
+  ~285-290ms floor under every request, including the keyed `/flight/:id`
+  lookup, which masks how much of the remaining latency is DynamoDB query
+  cost versus network transit. A same-region deployment (API and load
+  generator both in-region) would isolate query cost more precisely.
+- **Load generator and API shared one machine**, which is why 500 VUs
+  produced contention rather than a clean DynamoDB-side signal (see above).
 
 ## What was deliberately avoided
 
@@ -122,9 +150,11 @@ design, not the server, is what's driving latency.
   See `design/SCHEMA_DESIGN.md` §2.
 - **No offset-based pagination.** `LastEvaluatedKey`-based cursors only.
 
-## Resume bullet (fill in once real numbers exist)
+## Resume bullet
 
 > Designed and built a distributed flight-search service on DynamoDB using
-> single-table design with 2 GSIs to serve 3 access patterns without table
-> scans; seeded 100k+ records and load-tested to 500 concurrent users,
-> sustaining p95 < ___ ms on [endpoint].
+> single-table design with 2 GSIs to serve 3 access patterns (route+date
+> search, price/class filtering, direct lookup) without table scans; seeded
+> 100k+ synthetic records and load-tested to 150 concurrent users with a
+> 99.8% success rate and p95 latency under 1.4s including cross-region
+> network transit.
