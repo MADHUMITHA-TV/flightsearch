@@ -1,0 +1,19 @@
+{
+  "name": "flightsearch",
+  "version": "1.0.0",
+  "description": "Distributed flight search backed by single-table DynamoDB design",
+  "main": "api/server.js",
+  "scripts": {
+    "create-table": "node seed/create-table.js",
+    "generate-seed": "node seed/generate-seed-data.js 100000",
+    "load-seed": "node seed/load-seed-data.js",
+    "start": "node api/server.js",
+    "load-test": "k6 run load-test/k6-script.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.600.0",
+    "@aws-sdk/lib-dynamodb": "^3.600.0",
+    "@smithy/node-http-handler": "^4.12.1",
+    "express": "^4.19.2"
+  }
+}
